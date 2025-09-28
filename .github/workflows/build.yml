@@ -1,36 +1,59 @@
-name: Build and Release
+name: Build Local Dream
 
 on:
   workflow_dispatch:
 
 env:
-  APP_NAME: "MyApp"
-  FOLDER_NAME: "apks/magisk/custom_font_installer"
+  APP_NAME: "LocalDream"
+  FOLDER_NAME: "build"
+  ANDROID_NDK_VERSION: "r28"
+  QNN_SDK_VERSION: "2.29.0.241129"
 
 jobs:
-  release:
+  build:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          submodules: true
 
-      - name: Set up variables
-        id: vars
+      - name: Install dependencies
         run: |
-          echo "RELEASE_NAME=${{ env.APP_NAME }} Release" >> $GITHUB_ENV
-          echo "TAG_NAME=$(date +'%Y%m%d-%H%M%S')" >> $GITHUB_ENV
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build unzip curl build-essential git
+          rustup update stable
+          rustup default stable
+          rustup target add aarch64-linux-android
 
-      - name: Create folders
+      - name: Download and setup Android NDK
+        run: |
+          curl -L https://dl.google.com/android/repository/android-ndk-${ANDROID_NDK_VERSION}-linux.zip -o ndk.zip
+          unzip -q ndk.zip -d $HOME
+          echo "ANDROID_NDK_ROOT=$HOME/android-ndk-${ANDROID_NDK_VERSION}" >> $GITHUB_ENV
+
+      - name: Download and setup QNN SDK
+        run: |
+          curl -L https://apigwx-aws.qualcomm.com/qsc/public/v1/api/download/software/qualcomm_neural_processing_sdk/v${QNN_SDK_VERSION}.zip -o qnn.zip
+          unzip -q qnn.zip -d $HOME
+          SDK_DIR=$(find $HOME -maxdepth 1 -type d -name "qualcomm_neural_processing_sdk*")
+          echo "QNN_SDK_ROOT=$SDK_DIR" >> $GITHUB_ENV
+
+      - name: Build native libraries
+        run: |
+          cd app/src/main/cpp
+          bash ./build.sh
+
+      - name: Build APK with Gradle
+        run: |
+          ./gradlew assembleRelease
+
+      - name: Create folder for release
         run: mkdir -p ${{ env.FOLDER_NAME }}
 
-      - name: Download APK
-        run: |
-          curl -L -o ${{ env.FOLDER_NAME }}/${{ env.APP_NAME }}.apk "https://example.com/path/to/app.apk"
-
-      - name: Download Image
-        run: |
-          curl -L -o ${{ env.FOLDER_NAME }}/screenshot.png "https://example.com/path/to/screenshot.png"
+      - name: Copy APK to release folder
+        run: cp app/build/outputs/apk/release/app-release.apk ${{ env.FOLDER_NAME }}/${{ env.APP_NAME }}.apk
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
@@ -41,11 +64,10 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ env.TAG_NAME }}
-          name: ${{ env.RELEASE_NAME }}
+          tag_name: build-${{ github.run_number }}
+          name: ${{ env.APP_NAME }} Build ${{ github.run_number }}
           draft: false
           prerelease: false
           files: ${{ env.FOLDER_NAME }}/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          
